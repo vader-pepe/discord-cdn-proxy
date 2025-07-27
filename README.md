@@ -22,6 +22,27 @@ Custom response header `x-discord-cdn-proxy` will be set to one of following val
 * `memory` - refreshed link returned from the memory cache
 * `bucket` - refreshed link returned from the R2 bucket cache (optional for Cloudflare Worker deployment)
 
+## Parameter Passthrough
+
+The proxy supports passing additional query parameters through to the final Discord CDN URL. Any parameters other than Discord's built-in `ex`, `is`, and `hm` parameters will be preserved and included in the refreshed URL.
+
+This is particularly useful for the recently added `animated=true` query parameter to support animated `.webp` images produced by Midjourney Discord Bot video generations.
+
+**Example with parameters:**
+
+```
+https://your-proxy-url/?https://media.discordapp.net/attachments/9876543210987654321/5647382910564738291/mj-video-image.webp?ex=6886edbc&is=68859c3c&hm=1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2&animated=true
+```
+
+For the above example the proxy will:
+1. Extract the `animated=true` parameter from the original Discord URL
+2. Cache responses separately based on these parameters  
+3. Add the parameters back to the refreshed Discord URL so they are preserved in the final redirect
+
+All three implementations (Cloudflare Worker, Google App Engine, and Deno) support this functionality consistently.
+
+## Diagram
+
 [Diagram](https://useapi.net/assets/images/articles/discord-cdn-proxy.svg)  
 ![](https://useapi.net/assets/images/articles/discord-cdn-proxy.svg)
 
@@ -115,7 +136,8 @@ gcloud app deploy
 ```
 
 Now you can test deployed proxy.  
-Example (adjust to include actual values): `https://discord-cdn-proxy.it.r.appspot.com/?https://cdn.discordapp.com/attachments/channel/message/filename.ext`    
+Example (adjust to include actual values): `https://discord-cdn-proxy.it.r.appspot.com/?https://cdn.discordapp.com/attachments/channel/message/filename.ext`  
+Example with parameters: `https://discord-cdn-proxy.it.r.appspot.com/?https://cdn.discordapp.com/attachments/channel/message/image.gif?animated=true`    
 
 ### Debugging locally
 
@@ -184,6 +206,7 @@ wrangler secret:bulk .secrets
 
 Now you can test deployed proxy.  
 Example (adjust to include actual values): `https://your-discord-cdn-proxy-url/?https://cdn.discordapp.com/attachments/channel/message/filename.ext`  
+Example with parameters: `https://your-discord-cdn-proxy-url/?https://cdn.discordapp.com/attachments/channel/message/image.gif?animated=true&width=500`  
 
 ### Debugging locally
 
