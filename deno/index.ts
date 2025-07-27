@@ -120,6 +120,14 @@ interface RefreshedResponse {
       }
   
       const params = new URLSearchParams(attachmentURL.search);
+      
+      // Extract additional parameters (excluding ex, is, hm)
+      const additionalParams = new URLSearchParams();
+      for (const [key, value] of params) {
+        if (key !== 'ex' && key !== 'is' && key !== 'hm') {
+          additionalParams.set(key, value);
+        }
+      }
   
       if (params.get("ex") && params.get("is") && params.get("hm")) {
         const expr = new Date(parseInt(params.get("ex") ?? "", 16) * 1000);
@@ -129,9 +137,10 @@ interface RefreshedResponse {
       }
   
       const fileName = attachmentURL.pathname.split("/").pop() ?? "";
+      const cacheKey = additionalParams.size > 0 ? `${fileName}:${Array.from(additionalParams.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}=${v}`).join('&')}` : fileName;
   
       // check in-memory cache first
-      const cachedURL = cache.get(fileName);
+      const cachedURL = cache.get(cacheKey);
   
       if (cachedURL && cachedURL.expires.getTime() > Date.now()) {
         return redirectResponse(
@@ -149,7 +158,8 @@ interface RefreshedResponse {
         const kv = await Deno.openKv();
   
         // check if kv has our object anywhere
-        const object = await kv.get<CachedURL>([`${channel}-${fileName}`]);
+        const kvKey = `${channel}-${cacheKey}`;
+        const object = await kv.get<CachedURL>([kvKey]);
   
         if (object.value !== null) {
           const cachedURL: CachedURL = object.value!;
@@ -157,7 +167,7 @@ interface RefreshedResponse {
   
           if (cachedURL.expires.getTime() > Date.now()) {
             // save the memory cache too
-            cache.set(`${channel}-${fileName}`, cachedURL);
+            cache.set(cacheKey, cachedURL);
             return redirectResponse(
               request,
               cachedURL.href,
@@ -194,16 +204,24 @@ interface RefreshedResponse {
       ) {
         const refreshedURL = new URL(json.refreshed_urls[0].refreshed);
         const params = new URLSearchParams(refreshedURL.search);
+        
+        // Add additional parameters back to the refreshed URL
+        for (const [key, value] of additionalParams) {
+          params.set(key, value);
+        }
+        refreshedURL.search = params.toString();
+        
         const expires = new Date(parseInt(params.get("ex") ?? "", 16) * 1000);
   
         const cachedURL: CachedURL = { href: refreshedURL.href, expires };
   
         // save to memory cache, then save on backing storage, if set
-        cache.set(`${channel}-${fileName}`, cachedURL);
+        cache.set(cacheKey, cachedURL);
   
         if (Deno.env.get("DISCORD_CDN_PROXY_BUCKET")) {
           const kv = await Deno.openKv();
-          await kv.set([`${channel}-${fileName}`], cachedURL, {
+          const kvKey = `${channel}-${cacheKey}`;
+          await kv.set([kvKey], cachedURL, {
             expireIn: expires.getTime(),
           });
         }
