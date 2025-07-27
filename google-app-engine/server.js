@@ -90,6 +90,15 @@ async function refreshURL(request) {
             return withCORS(request, new Response(JSON.stringify({ message: `Channel ${channel} is not allowed` }), { status: 400 }));
 
         const params = new URLSearchParams(attachment_url.search);
+        
+        // Extract additional parameters (excluding ex, is, hm)
+        const additionalParams = new URLSearchParams();
+        for (const [key, value] of params) {
+            if (key !== 'ex' && key !== 'is' && key !== 'hm') {
+                additionalParams.set(key, value);
+            }
+        }
+        
         if (params.get('ex') && params.get('is') && params.get('hm')) {
             const expires = new Date(parseInt(params.get('ex') || '', 16) * 1000);
             if (expires.getTime() > Date.now()) {
@@ -99,8 +108,9 @@ async function refreshURL(request) {
         }
 
         const file_name = attachment_url.pathname.split('/').pop() || '';
+        const cache_key = additionalParams.size > 0 ? `${file_name}:${Array.from(additionalParams.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}=${v}`).join('&')}` : file_name;
 
-        const cached_url = cache.get(file_name);
+        const cached_url = cache.get(cache_key);
 
         if (cached_url && cached_url.expires.getTime() > Date.now()) {
             stats.memory++;
@@ -126,11 +136,18 @@ async function refreshURL(request) {
         if (Array.isArray(json.refreshed_urls) && json.refreshed_urls[0].refreshed) {
             const refreshed_url = new URL(json.refreshed_urls[0].refreshed);
             const params = new URLSearchParams(refreshed_url.search);
+            
+            // Add additional parameters back to the refreshed URL
+            for (const [key, value] of additionalParams) {
+                params.set(key, value);
+            }
+            refreshed_url.search = params.toString();
+            
             const expires = new Date(parseInt(params.get('ex') || '', 16) * 1000);
 
             const cached_url = { href: refreshed_url.href, expires };
 
-            cache.set(file_name, cached_url);
+            cache.set(cache_key, cached_url);
 
             stats.refreshed++;
 

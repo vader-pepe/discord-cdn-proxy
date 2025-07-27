@@ -80,30 +80,42 @@ export default {
 				return withCORS(request, Response.json(`Channel ${channel} is not allowed`, { status: 400 }));
 
 			const params = new URLSearchParams(attachment_url.search);
+
 			if (params.get('ex') && params.get('is') && params.get('hm')) {
 				const expires = new Date(parseInt(params.get('ex') ?? '', 16) * 1000);
 				if (expires.getTime() > Date.now())
 					return redirectResponse(request, attachment_url.href, expires, 'original');
 			}
 
+			// Extract additional parameters (excluding ex, is, hm)
+			const additionalParams = new URLSearchParams();
+			for (const [key, value] of params) {
+				if (key !== 'ex' && key !== 'is' && key !== 'hm') {
+					additionalParams.set(key, value);
+				}
+			}
+
 			const file_name = attachment_url.pathname.split('/').pop() ?? '';
+			const cache_key = additionalParams.size > 0 ? `${file_name}:${Array.from(additionalParams.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}=${v}`).join('&')}` : file_name;
+
+			// console.log(`Processing request for ${attachment_url.href} with cache key ${cache_key}`);
 
 			// Check memory cache first
-			const cached_url = cache.get(file_name);
+			const cached_url = cache.get(cache_key);
 
 			if (cached_url && cached_url.expires.getTime() > Date.now())
 				return redirectResponse(request, cached_url.href, cached_url.expires, 'memory');
 
 			// Check r2 bucket (if configured)
 			if (env.DISCORD_CDN_PROXY_BUCKET) {
-				const object = await env.DISCORD_CDN_PROXY_BUCKET.get(file_name);
+				const object = await env.DISCORD_CDN_PROXY_BUCKET.get(cache_key);
 
 				if (object) {
 					const cached_url: CachedURL = await object.json();
 					cached_url.expires = new Date(cached_url.expires);
 					if (cached_url.expires.getTime() > Date.now()) {
 						// Save to memory cache
-						cache.set(file_name, cached_url);
+						cache.set(cache_key, cached_url);
 						return redirectResponse(request, cached_url.href, cached_url.expires, 'bucket');
 					}
 				}
@@ -129,17 +141,24 @@ export default {
 			if (Array.isArray(json?.refreshed_urls) && json.refreshed_urls[0].refreshed) {
 				const refreshed_url = new URL(json.refreshed_urls[0].refreshed);
 				const params = new URLSearchParams(refreshed_url.search);
+
+				// Add additional parameters back to the refreshed URL
+				for (const [key, value] of additionalParams) {
+					params.set(key, value);
+				}
+				refreshed_url.search = params.toString();
+
 				// Convert from hex and add seconds
 				const expires = new Date(parseInt(params.get('ex') ?? '', 16) * 1000);
 
 				const cached_url: CachedURL = { href: refreshed_url.href, expires };
 
 				// Save to memory cache
-				cache.set(file_name, cached_url);
+				cache.set(cache_key, cached_url);
 
 				// Save to r2 bucket (if configured)
 				if (env.DISCORD_CDN_PROXY_BUCKET)
-					ctx.waitUntil(env.DISCORD_CDN_PROXY_BUCKET.put(file_name, JSON.stringify(cached_url),
+					ctx.waitUntil(env.DISCORD_CDN_PROXY_BUCKET.put(cache_key, JSON.stringify(cached_url),
 						{
 							httpMetadata: {
 								expires: expires
